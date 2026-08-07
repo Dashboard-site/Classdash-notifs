@@ -310,4 +310,23 @@ app.get("/tick", async (req, res) => {
   }
 });
 
+app.get("/test-send", async (req, res) => {
+  try {
+    if (process.env.CRON_SECRET && req.query.key !== process.env.CRON_SECRET) {
+      return res.status(401).json({ error: "unauthorized" });
+    }
+
+    initFirebase();
+
+    const title = req.query.title || "📚 Class Dashboard test";
+    const body  = req.query.body  || "Force notification — system OK";
+
+    const result = await sendToAll(title, body);
+    res.json({ ok: true, action: "test-send", title, body, ...result });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: String(err.message || err) });
+  }
+});
+
 app.listen(PORT, () => console.log("classdash-notifs on", PORT));
