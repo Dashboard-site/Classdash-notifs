@@ -1,10 +1,9 @@
-  const express = require("express");
+const express = require("express");
 const admin = require("firebase-admin");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Same schedule as index.html (IST)
 const NOTIF_SCHEDULE = [
   { time: "08:20", type: "assembly",  idx: null, prev: null,       prevLabel: null },
   { time: "08:40", type: "period",    idx: 0,    prev: "assembly", prevLabel: "Assembly" },
@@ -23,29 +22,93 @@ const NOTIF_SCHEDULE = [
   { time: "16:20", type: "dismissed", idx: null, prev: "period",   prevLabel: "Period 9" }
 ];
 
-// Prevent double-send in the same minute
-const fired = new Set();
+// Same as site (0=Sun … 6=Sat)
+const TIMETABLES = {
+  0: Array(10).fill({ subject: "None", teacher: "-" }),
+  1: [
+    { subject: "Chemistry", teacher: "Ashley tr." },
+    { subject: "Physics", teacher: "Shyni tr." },
+    { subject: "Maths", teacher: "Renya tr." },
+    { subject: "Computer Science", teacher: "Sarala tr." },
+    { subject: "English", teacher: "Manoj Kuriakose sir" },
+    { subject: "Optional Subject", teacher: "-" },
+    { subject: "Maths", teacher: "Sujith sir" },
+    { subject: "Chemistry", teacher: "Vimal sir" },
+    { subject: "Physics Practical", teacher: "-" },
+    { subject: "Chemistry Practical", teacher: "-" }
+  ],
+  2: [
+    { subject: "Computer Science", teacher: "Sarala tr." },
+    { subject: "Chemistry", teacher: "Vimal sir" },
+    { subject: "Physics", teacher: "Deepesh sir" },
+    { subject: "Maths", teacher: "Sujith sir" },
+    { subject: "English", teacher: "Manoj Kuriakose sir" },
+    { subject: "Optional Subject", teacher: "-" },
+    { subject: "English", teacher: "Manoj Mathew sir" },
+    { subject: "Computer Science", teacher: "Sarala tr." },
+    { subject: "P.T.", teacher: "Abin sir" },
+    { subject: "Chemistry", teacher: "Ashley tr." }
+  ],
+  3: [
+    { subject: "Chemistry", teacher: "Ashley tr." },
+    { subject: "Computer Science", teacher: "Sarala tr." },
+    { subject: "Optional Subject", teacher: "-" },
+    { subject: "Maths", teacher: "Sujith sir" },
+    { subject: "Chemistry", teacher: "Vimal sir" },
+    { subject: "Physics", teacher: "Deepesh sir" },
+    { subject: "Physics", teacher: "Shyni tr." },
+    { subject: "Maths", teacher: "Renya tr." },
+    { subject: "Computer Science", teacher: "Sarala tr." },
+    { subject: "M.P.T.", teacher: "-" }
+  ],
+  4: [
+    { subject: "Chemistry", teacher: "Ashley tr." },
+    { subject: "Physics", teacher: "Deepesh sir" },
+    { subject: "English", teacher: "Manoj Mathew sir" },
+    { subject: "Maths", teacher: "Sujith sir" },
+    { subject: "Physics", teacher: "Shyni tr." },
+    { subject: "Chemistry", teacher: "Vimal sir" },
+    { subject: "Optional Subject", teacher: "-" },
+    { subject: "Maths", teacher: "Renya tr." },
+    { subject: "Computer Science", teacher: "Sarala tr." },
+    { subject: "Library", teacher: "Navya tr." }
+  ],
+  5: [
+    { subject: "Physics", teacher: "Shyni tr." },
+    { subject: "Chemistry", teacher: "Vimal sir" },
+    { subject: "Computer Science", teacher: "Sarala tr." },
+    { subject: "Optional Subject", teacher: "-" },
+    { subject: "Maths", teacher: "Renya tr." },
+    { subject: "Physics", teacher: "Deepesh sir" },
+    { subject: "English", teacher: "Manoj Kuriakose sir" },
+    { subject: "Computer Science", teacher: "Sarala tr." },
+    { subject: "Chemistry", teacher: "Ashley tr." },
+    { subject: "Maths", teacher: "Sujith sir" }
+  ],
+  6: [
+    { subject: "Chemistry", teacher: "Ashley tr." },
+    { subject: "Computer Science", teacher: "Sarala tr." },
+    { subject: "Physics", teacher: "Shyni tr." },
+    { subject: "English", teacher: "Manoj Kuriakose sir" },
+    { subject: "Maths", teacher: "Sujith sir" },
+    { subject: "Optional Subject", teacher: "-" },
+    { subject: "Maths", teacher: "Renya tr." },
+    { subject: "English", teacher: "Manoj Mathew sir" },
+    { subject: "Computer Science", teacher: "Sarala tr." },
+    { subject: "Physics", teacher: "Deepesh sir" }
+  ]
+};
 
 function initFirebase() {
   if (admin.apps.length) return;
-
   const projectId = process.env.FIREBASE_PROJECT_ID;
   const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-  let privateKey = process.env.FIREBASE_PRIVATE_KEY || "";
-
-  // Render often stores newlines as \n
-  privateKey = privateKey.replace(/\\n/g, "\n");
-
+  let privateKey = (process.env.FIREBASE_PRIVATE_KEY || "").replace(/\\n/g, "\n");
   if (!projectId || !clientEmail || !privateKey) {
-    throw new Error("Missing FIREBASE_PROJECT_ID / CLIENT_EMAIL / PRIVATE_KEY");
+    throw new Error("Missing Firebase env vars");
   }
-
   admin.initializeApp({
-    credential: admin.credential.cert({
-      projectId,
-      clientEmail,
-      privateKey
-    })
+    credential: admin.credential.cert({ projectId, clientEmail, privateKey })
   });
 }
 
@@ -57,46 +120,105 @@ function nowIST() {
     hour12: false,
     year: "numeric",
     month: "2-digit",
-    day: "2-digit"
+    day: "2-digit",
+    weekday: "short"
   });
   const parts = Object.fromEntries(fmt.formatToParts(new Date()).map(p => [p.type, p.value]));
   const time = `${parts.hour}:${parts.minute}`;
   const dayKey = `${parts.year}-${parts.month}-${parts.day}`;
-  return { time, dayKey };
+  // 0=Sun … map from weekday
+  const map = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  const day = map[parts.weekday] ?? new Date().getDay();
+  return { time, dayKey, day };
 }
 
-function buildMessage(entry) {
+function minutesOf(t) {
+  const [h, m] = t.split(":").map(Number);
+  return h * 60 + m;
+}
+
+function buildMessage(entry, day) {
+  const tt = TIMETABLES[day] || TIMETABLES[0];
+
   if (entry.type === "assembly") {
-    return { title: "🙏 Prayer / Assembly Time", body: "Please proceed to the assembly." };
+    return {
+      title: "🙏 Prayer / Assembly Time",
+      body: "Please proceed to the assembly."
+    };
   }
+
   if (entry.type === "break") {
+    const prevIdx = entry.prevLabel ? parseInt(String(entry.prevLabel).replace("Period ", ""), 10) : NaN;
+    const prev = Number.isInteger(prevIdx) ? tt[prevIdx] : null;
+    const prevSub = prev ? prev.subject : entry.prevLabel;
     return {
       title: "☕ Break Time",
-      body: `${entry.prevLabel} over · Break until ${entry.breakEnd}`
+      body: `${entry.prevLabel}${prevSub ? ", " + prevSub : ""} over · Break until ${entry.breakEnd}`
     };
   }
+
   if (entry.type === "lunch") {
+    const prevIdx = entry.prevLabel ? parseInt(String(entry.prevLabel).replace("Period ", ""), 10) : NaN;
+    const prev = Number.isInteger(prevIdx) ? tt[prevIdx] : null;
+    const prevSub = prev ? prev.subject : "";
     return {
       title: "🍽️ Lunch Break",
-      body: `${entry.prevLabel} over · Lunch until ${entry.breakEnd}`
+      body: `${entry.prevLabel}${prevSub ? ", " + prevSub : ""} over · Lunch until ${entry.breakEnd}`
     };
   }
+
   if (entry.type === "dismissed") {
+    const prevIdx = entry.prevLabel ? parseInt(String(entry.prevLabel).replace("Period ", ""), 10) : NaN;
+    const prev = Number.isInteger(prevIdx) ? tt[prevIdx] : null;
     return {
       title: "🏁 School Dismissed",
-      body: `${entry.prevLabel} over · See you tomorrow!`
+      body: `${entry.prevLabel}${prev ? ", " + prev.subject : ""} over · See you tomorrow!`
     };
   }
+
   // period
+  const cur = tt[entry.idx] || { subject: "—", teacher: "—" };
+  const sub = cur.subject;
+  const teach = cur.teacher;
+
+  if (entry.prev === "assembly") {
+    return {
+      title: `📚 Current: ${sub} · ${teach}`,
+      body: "🙏 Prayer / Assembly over"
+    };
+  }
+
+  if (entry.prev === "period" && entry.prevLabel) {
+    const prevIdx = parseInt(String(entry.prevLabel).replace("Period ", ""), 10);
+    const prev = tt[prevIdx];
+    const prevSub = prev ? prev.subject : "—";
+    const isAssembly = String(prevSub).toLowerCase().includes("assembly");
+    const overLabel = isAssembly
+      ? "Prayer/Assembly over"
+      : `${entry.prevLabel}, ${prevSub} over`;
+    return {
+      title: `📚 ${overLabel}`,
+      body: `Next: ${sub} · ${teach}`
+    };
+  }
+
+  if (entry.prev === "break") {
+    return {
+      title: `📚 Period ${entry.idx}: ${sub} · ${teach}`,
+      body: "Break over"
+    };
+  }
+
+  if (entry.prev === "lunch") {
+    return {
+      title: `📚 Period ${entry.idx}: ${sub} · ${teach}`,
+      body: "Lunch over"
+    };
+  }
+
   return {
-    title: `📚 Period ${entry.idx}`,
-    body: entry.prev === "assembly"
-      ? "Prayer / Assembly over · Next period starting"
-      : entry.prev === "break"
-        ? "Break over · Next period starting"
-        : entry.prev === "lunch"
-          ? "Lunch over · Next period starting"
-          : `${entry.prevLabel || "Previous period"} over · Next period starting`
+    title: `📚 Period ${entry.idx}: ${sub} · ${teach}`,
+    body: "Starting now"
   };
 }
 
@@ -107,9 +229,7 @@ async function getTokens() {
 
 async function sendToAll(title, body) {
   const tokens = await getTokens();
-  if (!tokens.length) {
-    return { sent: 0, detail: "no tokens" };
-  }
+  if (!tokens.length) return { sent: 0, failed: 0, detail: "no tokens" };
 
   const res = await admin.messaging().sendEachForMulticast({
     tokens,
@@ -120,11 +240,24 @@ async function sendToAll(title, body) {
       }
     }
   });
+  return { sent: res.successCount, failed: res.failureCount };
+}
 
-  return {
-    sent: res.successCount,
-    failed: res.failureCount
-  };
+/** Returns true if this is the first claim for this slot today */
+async function claimSend(dayKey, slotTime) {
+  const id = `${dayKey}_${slotTime.replace(":", "")}`;
+  const ref = admin.firestore().collection("sentNotifs").doc(id);
+  try {
+    await ref.create({
+      dayKey,
+      slotTime,
+      at: admin.firestore.FieldValue.serverTimestamp()
+    });
+    return true;
+  } catch (e) {
+    // already exists → duplicate
+    return false;
+  }
 }
 
 app.get("/", (_req, res) => {
@@ -133,29 +266,17 @@ app.get("/", (_req, res) => {
 
 app.get("/tick", async (req, res) => {
   try {
-    if (process.env.CRON_SECRET) {
-      if (req.query.key !== process.env.CRON_SECRET) {
-        return res.status(401).json({ error: "unauthorized" });
-      }
+    if (process.env.CRON_SECRET && req.query.key !== process.env.CRON_SECRET) {
+      return res.status(401).json({ error: "unauthorized" });
     }
 
     initFirebase();
-
-    const { time, dayKey } = nowIST();
-
-    function minutesOf(t) {
-      const [h, m] = t.split(":").map(Number);
-      return h * 60 + m;
-    }
-
+    const { time, dayKey, day } = nowIST();
     const nowMin = minutesOf(time);
 
-    // Match exact minute OR up to 2 minutes late (Render cold start)
     let entry = null;
     for (const e of NOTIF_SCHEDULE) {
       const entryMin = minutesOf(e.time);
-      const fireKey = `${dayKey}-${e.time}`;
-      if (fired.has(fireKey)) continue;
       if (nowMin >= entryMin && nowMin < entryMin + 2) {
         entry = e;
         break;
@@ -166,15 +287,13 @@ app.get("/tick", async (req, res) => {
       return res.json({ ok: true, time, action: "none" });
     }
 
-    const fireKey = `${dayKey}-${entry.time}`;
-    const { title, body } = buildMessage(entry);
-    const result = await sendToAll(title, body);
-    fired.add(fireKey);
-
-    if (fired.size > 50) {
-      const first = fired.values().next().value;
-      fired.delete(first);
+    const okToSend = await claimSend(dayKey, entry.time);
+    if (!okToSend) {
+      return res.json({ ok: true, time, matched: entry.time, action: "already-sent" });
     }
+
+    const { title, body } = buildMessage(entry, day);
+    const result = await sendToAll(title, body);
 
     res.json({
       ok: true,
@@ -191,6 +310,4 @@ app.get("/tick", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log("classdash-notifs on", PORT);
-});
+app.listen(PORT, () => console.log("classdash-notifs on", PORT));
