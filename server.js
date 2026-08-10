@@ -278,6 +278,9 @@ app.get("/tick", async (req, res) => {
 
     initFirebase();
     const { time, dayKey, day } = nowIST();
+    if (day === 0) {
+      return res.json({ ok: true, time, action: "skip-sunday" });
+    }
     const nowMin = minutesOf(time);
 
     let entry = null;
