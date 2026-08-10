@@ -233,8 +233,14 @@ async function sendToAll(title, body) {
 
   const res = await admin.messaging().sendEachForMulticast({
     tokens,
-    notification: { title, body },
+    // data-only → browser will NOT auto-show a second notification
+    data: {
+      title: String(title),
+      body: String(body),
+      tag: "classdash"
+    },
     webpush: {
+      headers: { Urgency: "high" },
       fcmOptions: {
         link: process.env.APP_URL || "https://dashboard.xiicmarygiri.workers.dev/"
       }
