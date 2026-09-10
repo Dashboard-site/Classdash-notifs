@@ -7,7 +7,7 @@ const PORT = process.env.PORT || 3000;
 const NOTIF_SCHEDULE = [
   { time: "08:20", type: "assembly",  idx: null, prev: null,       prevLabel: null },
   { time: "08:40", type: "period",    idx: 0,    prev: "assembly", prevLabel: "Assembly" },
-  { time: "09:20", type: "period",    idx: 1,    prev: "period",   prevLabel: "Period 0" },
+  { time: "09:40", type: "period",    idx: 1,    prev: "period",   prevLabel: "Period 0" },
   { time: "10:20", type: "period",    idx: 2,    prev: "period",   prevLabel: "Period 1" },
   { time: "11:00", type: "break",     idx: null, prev: "period",   prevLabel: "Period 2", breakEnd: "11:10" },
   { time: "11:10", type: "period",    idx: 3,    prev: "break",    prevLabel: null },
